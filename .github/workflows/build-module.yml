@@ -7,8 +7,8 @@ on:
 
 jobs:
   build:
-    name: "v${{ matrix.build_env.tag }} - ${{ matrix.build_env.pkgarch}} :: ${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}} build"
-    runs-on: ubuntu-latest
+    name: "OpenWrt ${{ matrix.build_env.tag }} Build"
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         build_env:
@@ -19,51 +19,54 @@ jobs:
             vermagic: "9469a6c8c449c47e503c05678ea1559d-r1"
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout OpenWrt
+        uses: actions/checkout@v4
         with:
           repository: openwrt/openwrt
           ref: v24.10.0-rc5
           fetch-depth: 0
 
-      - name: Install dependencies
+      - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libncurses5-dev gawk git libssl-dev gettext zlib1g-dev swig unzip time rsync python3 python3-setuptools
+          sudo apt-get install -y \
+            build-essential libncurses5-dev gawk git libssl-dev \
+            gettext zlib1g-dev swig unzip time rsync python3 python3-setuptools
 
-      - name: Setup environment
+      - name: Setup build environment
         run: |
-          # Установка переменной TERM для обхода ошибки терминала
+          # Установка переменных окружения для обхода проблем с терминалом
           echo "TERM=dumb" >> $GITHUB_ENV
+          echo "FORCE_UNSAFE_CONFIGURE=1" >> $GITHUB_ENV
           
           # Настройка feeds
           wget https://downloads.openwrt.org/releases/${{ matrix.build_env.tag }}/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}/feeds.buildinfo -O feeds.conf
-          echo "src-git awgopenwrt https://github.com/yury-sannikov/awg-openwrt.git" >> ./feeds.conf
+          echo "src-git awgopenwrt https://github.com/yury-sannikov/awg-openwrt.git" >> feeds.conf
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
       - name: Configure build
         run: |
-          # Загрузка базового конфига
+          # Загрузка базовой конфигурации
           wget https://downloads.openwrt.org/releases/${{ matrix.build_env.tag }}/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}/config.buildinfo -O .config
           
           # Добавление необходимых опций
-          for option in \
-            "CONFIG_PACKAGE_kmod-amneziawg=m" \
-            "CONFIG_PACKAGE_amneziawg-tools=y" \
-            "CONFIG_PACKAGE_luci-app-amneziawg=y" \
-            "CONFIG_PACKAGE_kmod-crypto-lib-chacha20=m" \
-            "CONFIG_PACKAGE_kmod-crypto-lib-chacha20poly1305=m" \
-            "CONFIG_PACKAGE_kmod-crypto-chacha20poly1305=m"; do
-            echo "$option" >> .config
-          done
-          
+          cat <<EOT >> .config
+CONFIG_PACKAGE_kmod-amneziawg=m
+CONFIG_PACKAGE_amneziawg-tools=y
+CONFIG_PACKAGE_luci-app-amneziawg=y
+CONFIG_PACKAGE_kmod-crypto-lib-chacha20=m
+CONFIG_PACKAGE_kmod-crypto-lib-chacha20poly1305=m
+CONFIG_PACKAGE_kmod-crypto-chacha20poly1305=m
+EOT
+
           # Установка вермагика
           sed -i "s/CONFIG_VERSION_CODE=.*/CONFIG_VERSION_CODE=\"${{ matrix.build_env.vermagic }}\"/" .config
           
-          # Применение конфигурации без интерактивного меню
+          # Применение конфигурации
           make defconfig CONFIG_TERMINAL=y2j NONINTERACTIVE=1
 
-      - name: Build tools and toolchain
+      - name: Build toolchain
         run: |
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
@@ -75,26 +78,29 @@ jobs:
           
           # Проверка Vermagic
           VERMAGIC=$(cat ./build_dir/target-*/linux-*/linux-*/.vermagic)
-          echo "Vermagic: $VERMAGIC"
-          if [ "$VERMAGIC" != "${{ matrix.build_env.vermagic }}" ]; then
-            echo "Error: Vermagic mismatch!"
-            exit 1
-          fi
+          echo "Current Vermagic: $VERMAGIC"
+          echo "Expected Vermagic: ${{ matrix.build_env.vermagic }}"
+          [ "$VERMAGIC" = "${{ matrix.build_env.vermagic }}" ] || exit 1
 
       - name: Build packages
         run: |
-          make package/kmod-amneziawg/{clean,compile} V=s
-          make package/luci-app-amneziawg/{clean,compile} V=s
-          make package/amneziawg-tools/{clean,compile} V=s
-
-      - name: Prepare artifacts
-        run: |
-          mkdir -p artifacts
-          cp bin/packages/${{ matrix.build_env.pkgarch }}/awgopenwrt/*.ipk artifacts/
-          cp bin/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}/packages/kmod-amneziawg_*.ipk artifacts/
+          for pkg in kmod-amneziawg luci-app-amneziawg amneziawg-tools; do
+            make package/$pkg/{clean,compile} V=s
+          done
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: openwrt-packages
-          path: artifacts/*.ipk
+          name: openwrt-packages-${{ matrix.build_env.target }}-${{ matrix.build_env.subtarget }}
+          path: |
+            bin/packages/${{ matrix.build_env.pkgarch }}/awgopenwrt/*.ipk
+            bin/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}/packages/kmod-amneziawg_*.ipk
+          retention-days: 5
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            bin/packages/${{ matrix.build_env.pkgarch }}/awgopenwrt/*.ipk
+            bin/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}/packages/kmod-amneziawg_*.ipk
