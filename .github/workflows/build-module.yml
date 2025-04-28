@@ -1,4 +1,4 @@
-name: Create Release for 4.7.5-op24
+name: Build AmneziaWG for GL.iNet GL-MT6000
 
 on:
   workflow_dispatch:
@@ -8,100 +8,72 @@ on:
 
 jobs:
   build:
-    name: "v${{ matrix.build_env.tag }} - ${{ matrix.build_env.pkgarch }} :: ${{ matrix.build_env.target }}/${{ matrix.build_env.subtarget }} build"
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        build_env:
-          - tag: "24.10.0-rc5"
-            pkgarch: aarch64_cortex-a53
-            target: mediatek
-            subtarget: filogic
-            device: glinet_gl-mt6000
-            vermagic: "9469a6c8c449c47e503c05678ea1559d-r1"
+    env:
+      VERMAGIC_EXPECTED: "9469a6c8c449c47e503c05678ea1559d-r1"
 
     steps:
-      - uses: actions/checkout@v4
-        with:
-          repository: openwrt/openwrt
-          ref: "v${{ matrix.build_env.tag }}"
-          fetch-depth: 0
+      - name: Checkout Repo
+        uses: actions/checkout@v4
 
-      - name: Cache Tools and Kernel
-        id: cache-tools-kernel
-        uses: actions/cache@v4
-        with:
-          path: |
-            build_dir/host/
-            staging_dir/host/
-          key: ${{ runner.os }}-build-tools-${{ matrix.build_env.tag }}-${{ matrix.build_env.pkgarch }}-${{ matrix.build_env.target }}-${{ matrix.build_env.subtarget }}
-          restore-keys: |
-            ${{ runner.os }}-build-tools-${{ matrix.build_env.tag }}-${{ matrix.build_env.pkgarch }}-
-
-      - name: Setup Build Environment
+      - name: Install Dependencies
         run: |
-          echo "Setting up environment for ${{ matrix.build_env.pkgarch }}, target: ${{ matrix.build_env.target }}, subtarget: ${{ matrix.build_env.subtarget }}, device: ${{ matrix.build_env.device }}"
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-pip wget unzip
 
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
+      - name: Clone GL.iNet Build System
+        run: |
+          git clone https://github.com/gl-inet/gl-infra-builder.git
+          cd gl-infra-builder
+          python3 setup.py -c profiles/glinet_mt6000
+          make repo-update
 
-          # Setup config
-          make defconfig
-          echo "CONFIG_TARGET_${{ matrix.build_env.target }}_${{ matrix.build_env.subtarget }}=y" >> .config
-          echo "CONFIG_TARGET_${{ matrix.build_env.target }}_${{ matrix.build_env.subtarget }}_DEVICE_${{ matrix.build_env.device }}=y" >> .config
+      - name: Setup .config
+        run: |
+          cd gl-infra-builder/openwrt
+          
+          # Download standard config
+          wget https://dl.gl-inet.com/firmware/mt6000/qsdk/24.10.0-rc5/config.buildinfo -O .config
 
+          # Добавляем нужные пакеты
           echo "CONFIG_PACKAGE_kmod-amneziawg=m" >> .config
           echo "CONFIG_PACKAGE_amneziawg-tools=y" >> .config
           echo "CONFIG_PACKAGE_luci-app-amneziawg=y" >> .config
-          echo "CONFIG_PACKAGE_kmod-crypto-lib-chacha20=m" >> .config
-          echo "CONFIG_PACKAGE_kmod-crypto-lib-chacha20poly1305=m" >> .config
-          echo "CONFIG_PACKAGE_kmod-crypto-chacha20poly1305=m" >> .config
 
-          # Disable image building
-          echo "# CONFIG_TARGET_IMAGES_PAD is not set" >> .config
-          echo "# CONFIG_TARGET_ROOTFS_INITRAMFS is not set" >> .config
-          echo "# CONFIG_TARGET_ROOTFS_SQUASHFS is not set" >> .config
+          # Минимизируем сборку
+          sed -i 's/CONFIG_TARGET_IMAGES_PAD=y/# CONFIG_TARGET_IMAGES_PAD is not set/' .config || true
+          sed -i 's/CONFIG_TARGET_ROOTFS_INITRAMFS=y/# CONFIG_TARGET_ROOTFS_INITRAMFS is not set/' .config || true
+          sed -i 's/CONFIG_TARGET_ROOTFS_SQUASHFS=y/# CONFIG_TARGET_ROOTFS_SQUASHFS is not set/' .config || true
           echo "# CONFIG_TARGET_BUILD_KERNEL is not set" >> .config
 
           make defconfig
 
-      - name: Build Tools and Toolchain
+      - name: Build
         run: |
-          make tools/install -i -j$(nproc)
-          make toolchain/install -i -j$(nproc)
+          cd gl-infra-builder/openwrt
+          make tools/install -j$(nproc) || make tools/install -j1 V=s
+          make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
+          make target/linux/compile -j$(nproc) V=s
 
-      - name: Build Kernel Modules
-        run: |
-          make target/linux/modules/compile -i -j$(nproc) V=s
-          
+          # Проверяем vermagic
           VERMAGIC=$(cat ./build_dir/target-*/linux-*/linux-*/.vermagic)
-          echo "Built vermagic: $VERMAGIC"
-          VERMAGIC_EXPECTED="${{ matrix.build_env.vermagic }}"
-          
+          echo "Detected vermagic: $VERMAGIC"
           if [ "$VERMAGIC" != "$VERMAGIC_EXPECTED" ]; then
             echo "Vermagic mismatch: $VERMAGIC, expected: $VERMAGIC_EXPECTED"
             exit 1
           fi
 
-      - name: Build AmneziaWG Packages
-        run: |
-          make package/kmod-amneziawg/{clean,download,prepare} V=s || true
-          make package/kmod-amneziawg/compile V=s || true
-          make package/luci-app-amneziawg/{clean,download,prepare}
-          make package/luci-app-amneziawg/compile V=s
-          make package/amneziawg-tools/{clean,download,prepare}
-          make package/amneziawg-tools/compile
+          # Собираем пакеты
+          make package/kmod-amneziawg/{clean,download,prepare,compile} V=s
+          make package/amneziawg-tools/{clean,download,prepare,compile} V=s
+          make package/luci-app-amneziawg/{clean,download,prepare,compile} V=s
 
-      - name: Prepare Artifacts
+      - name: Collect Artifacts
         run: |
           mkdir -p awgrelease
-          postfix="v${{ matrix.build_env.tag }}_${{ matrix.build_env.pkgarch }}_${{ matrix.build_env.target }}_${{ matrix.build_env.subtarget }}"
+          find gl-infra-builder/openwrt/bin/packages/ -name "*amneziawg*.ipk" -exec cp {} awgrelease/ \;
 
-          cp bin/packages/${{ matrix.build_env.pkgarch }}/awgopenwrt/amneziawg-tools_*.ipk awgrelease/amneziawg-tools_${postfix}.ipk
-          cp bin/packages/${{ matrix.build_env.pkgarch }}/awgopenwrt/luci-app-amneziawg_*.ipk awgrelease/luci-app-amneziawg_${postfix}.ipk
-          cp bin/targets/${{ matrix.build_env.target }}/${{ matrix.build_env.subtarget }}/packages/kmod-amneziawg_*.ipk awgrelease/kmod-amneziawg_${postfix}.ipk
-
-      - name: Release Artifacts
+      - name: Release
         uses: softprops/action-gh-release@v1
         with:
           files: awgrelease/*.ipk
