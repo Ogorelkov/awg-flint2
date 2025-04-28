@@ -22,19 +22,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: openwrt/openwrt
-          ref: v24.10.0-rc5  # Используем тег вместо хэша коммита
+          ref: v24.10.0-rc5
           fetch-depth: 0
 
-      - name: Cache Tools and Kernel
-        id: cache-tools-kernel
-        uses: actions/cache@v4
-        env:
-          cache-name: "cache-tools-kernel-${{ matrix.build_env.tag }}-${{ matrix.build_env.pkgarch}}-${{ matrix.build_env.target}}-${{ matrix.build_env.subtarget}}"
-        with:
-          path: "**"
-          key: ${{ runner.os }}-build-vm4-${{ env.cache-name }}
-          restore-keys: |
-            ${{ runner.os }}-build-vm4-cache-tools-kernel-${{ matrix.build_env.tag }}-${{ matrix.build_env.pkgarch}}-
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libncurses5-dev gawk git libssl-dev gettext zlib1g-dev swig unzip time rsync python3 python3-setuptools
 
       - name: Building kernel and tools
         run: |
@@ -47,9 +41,10 @@ jobs:
           # Настройка feeds
           wget https://downloads.openwrt.org/releases/${{ matrix.build_env.tag }}/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}/feeds.buildinfo -O feeds.conf
           echo "src-git awgopenwrt https://github.com/yury-sannikov/awg-openwrt.git" >> ./feeds.conf
-          ./scripts/feeds update && ./scripts/feeds install -a
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
 
-          # Конфигурация
+          # Загрузка конфига и добавление наших опций
           wget https://downloads.openwrt.org/releases/${{ matrix.build_env.tag }}/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}/config.buildinfo -O .config
           echo "CONFIG_PACKAGE_kmod-amneziawg=m" >> .config
           echo "CONFIG_PACKAGE_amneziawg-tools=y" >> .config
@@ -58,16 +53,15 @@ jobs:
           echo "CONFIG_PACKAGE_kmod-crypto-lib-chacha20poly1305=m" >> .config
           echo "CONFIG_PACKAGE_kmod-crypto-chacha20poly1305=m" >> .config
           
-          # Принудительное задание Vermagic
+          # Установка вермагика и неинтерактивная конфигурация
           sed -i "s/CONFIG_VERSION_CODE=.*/CONFIG_VERSION_CODE=\"${{ matrix.build_env.vermagic }}\"/" .config
           make defconfig NONINTERACTIVE=1
 
-          # Сборка инструментов и ядра
-          echo ">> Сборка tools и toolchain..."
+          # Сборка инструментов и toolchain
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
 
-          echo ">> Пересборка ядра..."
+          # Сборка ядра
           make target/linux/{clean,prepare} V=s
           make target/linux/compile -j$(nproc) V=s
 
@@ -83,13 +77,8 @@ jobs:
       - name: Build AmneziaWG
         run: |
           # Сборка пакетов
-          echo ">> Сборка kmod-amneziawg..."
           make package/kmod-amneziawg/{clean,compile} V=s || true
-
-          echo ">> Сборка luci-app-amneziawg..."
           make package/luci-app-amneziawg/{clean,compile} V=s
-
-          echo ">> Сборка amneziawg-tools..."
           make package/amneziawg-tools/{clean,compile} V=s
 
       - name: Prepare artifacts
