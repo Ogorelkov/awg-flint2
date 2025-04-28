@@ -30,67 +30,71 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential libncurses5-dev gawk git libssl-dev gettext zlib1g-dev swig unzip time rsync python3 python3-setuptools
 
-      - name: Building kernel and tools
+      - name: Setup environment
         run: |
-          echo "pkgarch: ${{ matrix.build_env.pkgarch}}, target:${{ matrix.build_env.target}}, subtarget: ${{ matrix.build_env.subtarget}}"
+          # Установка переменной TERM для обхода ошибки терминала
+          echo "TERM=dumb" >> $GITHUB_ENV
           
-          # Очистка
-          make clean
-          make dirclean
-
           # Настройка feeds
           wget https://downloads.openwrt.org/releases/${{ matrix.build_env.tag }}/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}/feeds.buildinfo -O feeds.conf
           echo "src-git awgopenwrt https://github.com/yury-sannikov/awg-openwrt.git" >> ./feeds.conf
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-          # Загрузка конфига и добавление наших опций
+      - name: Configure build
+        run: |
+          # Загрузка базового конфига
           wget https://downloads.openwrt.org/releases/${{ matrix.build_env.tag }}/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}/config.buildinfo -O .config
-          echo "CONFIG_PACKAGE_kmod-amneziawg=m" >> .config
-          echo "CONFIG_PACKAGE_amneziawg-tools=y" >> .config
-          echo "CONFIG_PACKAGE_luci-app-amneziawg=y" >> .config
-          echo "CONFIG_PACKAGE_kmod-crypto-lib-chacha20=m" >> .config
-          echo "CONFIG_PACKAGE_kmod-crypto-lib-chacha20poly1305=m" >> .config
-          echo "CONFIG_PACKAGE_kmod-crypto-chacha20poly1305=m" >> .config
           
-          # Установка вермагика и неинтерактивная конфигурация
+          # Добавление необходимых опций
+          for option in \
+            "CONFIG_PACKAGE_kmod-amneziawg=m" \
+            "CONFIG_PACKAGE_amneziawg-tools=y" \
+            "CONFIG_PACKAGE_luci-app-amneziawg=y" \
+            "CONFIG_PACKAGE_kmod-crypto-lib-chacha20=m" \
+            "CONFIG_PACKAGE_kmod-crypto-lib-chacha20poly1305=m" \
+            "CONFIG_PACKAGE_kmod-crypto-chacha20poly1305=m"; do
+            echo "$option" >> .config
+          done
+          
+          # Установка вермагика
           sed -i "s/CONFIG_VERSION_CODE=.*/CONFIG_VERSION_CODE=\"${{ matrix.build_env.vermagic }}\"/" .config
-          make defconfig NONINTERACTIVE=1
+          
+          # Применение конфигурации без интерактивного меню
+          make defconfig CONFIG_TERMINAL=y2j NONINTERACTIVE=1
 
-          # Сборка инструментов и toolchain
+      - name: Build tools and toolchain
+        run: |
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
 
-          # Сборка ядра
+      - name: Build kernel
+        run: |
           make target/linux/{clean,prepare} V=s
           make target/linux/compile -j$(nproc) V=s
-
+          
           # Проверка Vermagic
           VERMAGIC=$(cat ./build_dir/target-*/linux-*/linux-*/.vermagic)
-          echo "Текущий Vermagic: $VERMAGIC"
-          echo "Ожидаемый Vermagic: ${{ matrix.build_env.vermagic }}"
+          echo "Vermagic: $VERMAGIC"
           if [ "$VERMAGIC" != "${{ matrix.build_env.vermagic }}" ]; then
-            echo "Ошибка: Vermagic не совпадает!"
+            echo "Error: Vermagic mismatch!"
             exit 1
           fi
 
-      - name: Build AmneziaWG
+      - name: Build packages
         run: |
-          # Сборка пакетов
-          make package/kmod-amneziawg/{clean,compile} V=s || true
+          make package/kmod-amneziawg/{clean,compile} V=s
           make package/luci-app-amneziawg/{clean,compile} V=s
           make package/amneziawg-tools/{clean,compile} V=s
 
       - name: Prepare artifacts
         run: |
-          tag_name=${{ github.ref_name }}
-          mkdir -p awgrelease
-          postfix="${tag_name}_v${{ matrix.build_env.tag }}_${{ matrix.build_env.pkgarch}}_${{ matrix.build_env.target}}_${{ matrix.build_env.subtarget}}"
-          cp bin/packages/${{ matrix.build_env.pkgarch }}/awgopenwrt/amneziawg-tools_*.ipk awgrelease/amneziawg-tools_${postfix}.ipk
-          cp bin/packages/${{ matrix.build_env.pkgarch }}/awgopenwrt/luci-app-amneziawg_*.ipk awgrelease/luci-app-amneziawg_${postfix}.ipk
-          cp bin/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}/packages/kmod-amneziawg_*.ipk awgrelease/kmod-amneziawg_${postfix}.ipk
+          mkdir -p artifacts
+          cp bin/packages/${{ matrix.build_env.pkgarch }}/awgopenwrt/*.ipk artifacts/
+          cp bin/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}/packages/kmod-amneziawg_*.ipk artifacts/
 
-      - name: Release
-        uses: softprops/action-gh-release@v1
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
         with:
-          files: awgrelease/*.ipk
+          name: openwrt-packages
+          path: artifacts/*.ipk
