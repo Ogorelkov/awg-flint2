@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    name: "v${{ matrix.build_env.tag }} - ${{ matrix.build_env.pkgarch}} :: ${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}} build"
+    name: "v${{ matrix.build_env.tag }} - ${{ matrix.build_env.pkgarch }} :: ${{ matrix.build_env.target }}/${{ matrix.build_env.subtarget }} build"
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -17,52 +17,51 @@ jobs:
             pkgarch: aarch64_cortex-a53
             target: mediatek
             subtarget: filogic
+            device: glinet_gl-mt6000
             vermagic: "9469a6c8c449c47e503c05678ea1559d-r1"
 
     steps:
       - uses: actions/checkout@v4
         with:
           repository: openwrt/openwrt
-          ref: v${{ matrix.build_env.tag }}
+          ref: "v${{ matrix.build_env.tag }}"
           fetch-depth: 0
 
       - name: Cache Tools and Kernel
         id: cache-tools-kernel
         uses: actions/cache@v4
-        env:
-          cache-name: "cache-tools-kernel-${{ matrix.build_env.tag }}-${{ matrix.build_env.pkgarch}}-${{ matrix.build_env.target}}-${{ matrix.build_env.subtarget}}"
         with:
           path: |
             build_dir/host/
             staging_dir/host/
-          key: ${{ runner.os }}-build-tools-${{ env.cache-name }}
+          key: ${{ runner.os }}-build-tools-${{ matrix.build_env.tag }}-${{ matrix.build_env.pkgarch }}-${{ matrix.build_env.target }}-${{ matrix.build_env.subtarget }}
           restore-keys: |
-            ${{ runner.os }}-build-tools-${{ matrix.build_env.tag }}-${{ matrix.build_env.pkgarch}}-
+            ${{ runner.os }}-build-tools-${{ matrix.build_env.tag }}-${{ matrix.build_env.pkgarch }}-
 
       - name: Setup Build Environment
         run: |
-          echo "Setting up environment for ${{ matrix.build_env.pkgarch }}, target: ${{ matrix.build_env.target }}, subtarget: ${{ matrix.build_env.subtarget }}"
+          echo "Setting up environment for ${{ matrix.build_env.pkgarch }}, target: ${{ matrix.build_env.target }}, subtarget: ${{ matrix.build_env.subtarget }}, device: ${{ matrix.build_env.device }}"
 
-          # Setup feeds
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-          # Create minimal config
-          cat <<EOF > .config
-CONFIG_TARGET_mediatek=y
-CONFIG_TARGET_mediatek_filogic=y
-CONFIG_TARGET_mediatek_filogic_DEVICE_glinet_gl-mt6000=y
-CONFIG_PACKAGE_kmod-amneziawg=m
-CONFIG_PACKAGE_amneziawg-tools=y
-CONFIG_PACKAGE_luci-app-amneziawg=y
-CONFIG_PACKAGE_kmod-crypto-lib-chacha20=m
-CONFIG_PACKAGE_kmod-crypto-lib-chacha20poly1305=m
-CONFIG_PACKAGE_kmod-crypto-chacha20poly1305=m
-# CONFIG_TARGET_IMAGES_PAD is not set
-# CONFIG_TARGET_ROOTFS_INITRAMFS is not set
-# CONFIG_TARGET_ROOTFS_SQUASHFS is not set
-# CONFIG_TARGET_BUILD_KERNEL is not set
-EOF
+          # Setup config
+          make defconfig
+          echo "CONFIG_TARGET_${{ matrix.build_env.target }}_${{ matrix.build_env.subtarget }}=y" >> .config
+          echo "CONFIG_TARGET_${{ matrix.build_env.target }}_${{ matrix.build_env.subtarget }}_DEVICE_${{ matrix.build_env.device }}=y" >> .config
+
+          echo "CONFIG_PACKAGE_kmod-amneziawg=m" >> .config
+          echo "CONFIG_PACKAGE_amneziawg-tools=y" >> .config
+          echo "CONFIG_PACKAGE_luci-app-amneziawg=y" >> .config
+          echo "CONFIG_PACKAGE_kmod-crypto-lib-chacha20=m" >> .config
+          echo "CONFIG_PACKAGE_kmod-crypto-lib-chacha20poly1305=m" >> .config
+          echo "CONFIG_PACKAGE_kmod-crypto-chacha20poly1305=m" >> .config
+
+          # Disable image building
+          echo "# CONFIG_TARGET_IMAGES_PAD is not set" >> .config
+          echo "# CONFIG_TARGET_ROOTFS_INITRAMFS is not set" >> .config
+          echo "# CONFIG_TARGET_ROOTFS_SQUASHFS is not set" >> .config
+          echo "# CONFIG_TARGET_BUILD_KERNEL is not set" >> .config
 
           make defconfig
 
@@ -73,13 +72,12 @@ EOF
 
       - name: Build Kernel Modules
         run: |
-          echo "Building only kernel modules..."
           make target/linux/modules/compile -i -j$(nproc) V=s
-          cat ./build_dir/target-*/linux-*/linux-*/.vermagic || true
-
-          # Check vermagic
+          
           VERMAGIC=$(cat ./build_dir/target-*/linux-*/linux-*/.vermagic)
-          VERMAGIC_EXPECTED=${{ matrix.build_env.vermagic }}
+          echo "Built vermagic: $VERMAGIC"
+          VERMAGIC_EXPECTED="${{ matrix.build_env.vermagic }}"
+          
           if [ "$VERMAGIC" != "$VERMAGIC_EXPECTED" ]; then
             echo "Vermagic mismatch: $VERMAGIC, expected: $VERMAGIC_EXPECTED"
             exit 1
@@ -96,21 +94,14 @@ EOF
 
       - name: Prepare Artifacts
         run: |
-          tag_name=${{ github.ref_name }}
           mkdir -p awgrelease
-          postfix="${tag_name}_v${{ matrix.build_env.tag }}_${{ matrix.build_env.pkgarch}}_${{ matrix.build_env.target}}_${{ matrix.build_env.subtarget}}"
+          postfix="v${{ matrix.build_env.tag }}_${{ matrix.build_env.pkgarch }}_${{ matrix.build_env.target }}_${{ matrix.build_env.subtarget }}"
 
           cp bin/packages/${{ matrix.build_env.pkgarch }}/awgopenwrt/amneziawg-tools_*.ipk awgrelease/amneziawg-tools_${postfix}.ipk
           cp bin/packages/${{ matrix.build_env.pkgarch }}/awgopenwrt/luci-app-amneziawg_*.ipk awgrelease/luci-app-amneziawg_${postfix}.ipk
-          cp bin/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}/packages/kmod-amneziawg_*.ipk awgrelease/kmod-amneziawg_${postfix}.ipk
-
-          # Create a zip for easier download
-          cd awgrelease
-          zip ../amneziawg_release_${postfix}.zip *
+          cp bin/targets/${{ matrix.build_env.target }}/${{ matrix.build_env.subtarget }}/packages/kmod-amneziawg_*.ipk awgrelease/kmod-amneziawg_${postfix}.ipk
 
       - name: Release Artifacts
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            awgrelease/*.ipk
-            amneziawg_release_*.zip
+          files: awgrelease/*.ipk
