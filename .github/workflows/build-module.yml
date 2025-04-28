@@ -1,4 +1,4 @@
-name: Create Release for GL-MT6000
+name: Create Release on Tag
 
 on:
   workflow_dispatch:
