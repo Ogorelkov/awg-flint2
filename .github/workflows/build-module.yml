@@ -1,4 +1,4 @@
-name: Create Release on Tag
+name: Create Release for 4.7.5-op24
 
 on:
   workflow_dispatch:
