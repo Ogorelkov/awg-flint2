@@ -1,4 +1,4 @@
-name: AmneziaWG for GL.iNet GL-MT6000
+name: Build AmneziaWG for GL.iNet GL-MT6000
 on: 
   workflow_dispatch:
     push:
@@ -35,11 +35,9 @@ jobs:
 
       - name: Setup build environment
         run: |
-          # Установка переменных окружения для обхода проблем с терминалом
           echo "TERM=dumb" >> $GITHUB_ENV
           echo "FORCE_UNSAFE_CONFIGURE=1" >> $GITHUB_ENV
           
-          # Настройка feeds
           wget https://downloads.openwrt.org/releases/${{ matrix.build_env.tag }}/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}/feeds.buildinfo -O feeds.conf
           echo "src-git awgopenwrt https://github.com/yury-sannikov/awg-openwrt.git" >> feeds.conf
           ./scripts/feeds update -a
@@ -47,23 +45,19 @@ jobs:
 
       - name: Configure build
         run: |
-          # Загрузка базовой конфигурации
           wget https://downloads.openwrt.org/releases/${{ matrix.build_env.tag }}/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}/config.buildinfo -O .config
           
-          # Добавление необходимых опций
-          cat <<EOT >> .config
-CONFIG_PACKAGE_kmod-amneziawg=m
-CONFIG_PACKAGE_amneziawg-tools=y
-CONFIG_PACKAGE_luci-app-amneziawg=y
-CONFIG_PACKAGE_kmod-crypto-lib-chacha20=m
-CONFIG_PACKAGE_kmod-crypto-lib-chacha20poly1305=m
-CONFIG_PACKAGE_kmod-crypto-chacha20poly1305=m
-EOT
+          # Исправленный блок добавления конфигурационных опций
+          {
+            echo "CONFIG_PACKAGE_kmod-amneziawg=m"
+            echo "CONFIG_PACKAGE_amneziawg-tools=y"
+            echo "CONFIG_PACKAGE_luci-app-amneziawg=y"
+            echo "CONFIG_PACKAGE_kmod-crypto-lib-chacha20=m"
+            echo "CONFIG_PACKAGE_kmod-crypto-lib-chacha20poly1305=m"
+            echo "CONFIG_PACKAGE_kmod-crypto-chacha20poly1305=m"
+          } >> .config
 
-          # Установка вермагика
           sed -i "s/CONFIG_VERSION_CODE=.*/CONFIG_VERSION_CODE=\"${{ matrix.build_env.vermagic }}\"/" .config
-          
-          # Применение конфигурации
           make defconfig CONFIG_TERMINAL=y2j NONINTERACTIVE=1
 
       - name: Build toolchain
@@ -76,7 +70,6 @@ EOT
           make target/linux/{clean,prepare} V=s
           make target/linux/compile -j$(nproc) V=s
           
-          # Проверка Vermagic
           VERMAGIC=$(cat ./build_dir/target-*/linux-*/linux-*/.vermagic)
           echo "Current Vermagic: $VERMAGIC"
           echo "Expected Vermagic: ${{ matrix.build_env.vermagic }}"
