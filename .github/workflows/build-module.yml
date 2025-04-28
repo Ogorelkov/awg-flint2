@@ -29,8 +29,8 @@ jobs:
       - name: Setup .config for GL-MT6000
         run: |
           cd imagebuilder
-          
-          # Используем конфигурацию для GL-MT6000
+
+          # Скачиваем конфигурацию для GL-MT6000
           wget https://dl.gl-inet.com/firmware/mt6000/qsdk/24.10.0-rc5/config.buildinfo -O .config
 
           # Добавляем нужные пакеты
@@ -44,12 +44,12 @@ jobs:
           sed -i 's/CONFIG_TARGET_ROOTFS_SQUASHFS=y/# CONFIG_TARGET_ROOTFS_SQUASHFS is not set/' .config || true
           echo "# CONFIG_TARGET_BUILD_KERNEL is not set" >> .config
 
-          make defconfig
-
       - name: Build
         run: |
           cd imagebuilder
-          make -j$(nproc) V=s
+          
+          # Проверим доступные таргеты
+          make target/linux/{clean,prepare,compile} V=s
 
           # Проверяем vermagic
           VERMAGIC=$(cat ./build_dir/target-*/linux-*/linux-*/.vermagic)
