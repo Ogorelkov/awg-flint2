@@ -16,13 +16,13 @@ jobs:
             pkgarch: aarch64_cortex-a53
             target: mediatek
             subtarget: filogic
-            vermagic: "9469a6c8c449c47e503c05678ea1559d-r1"  # Версия с роутера
+            vermagic: "9469a6c8c449c47e503c05678ea1559d-r1"
 
     steps:
       - uses: actions/checkout@v4
         with:
           repository: openwrt/openwrt
-          ref: 6dacba30a7  # Точный коммит из OPENWRT_VERSION
+          ref: v24.10.0-rc5  # Используем тег вместо хэша коммита
           fetch-depth: 0
 
       - name: Cache Tools and Kernel
@@ -49,7 +49,7 @@ jobs:
           echo "src-git awgopenwrt https://github.com/yury-sannikov/awg-openwrt.git" >> ./feeds.conf
           ./scripts/feeds update && ./scripts/feeds install -a
 
-          # Конфигурация (без интерактивного меню)
+          # Конфигурация
           wget https://downloads.openwrt.org/releases/${{ matrix.build_env.tag }}/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}/config.buildinfo -O .config
           echo "CONFIG_PACKAGE_kmod-amneziawg=m" >> .config
           echo "CONFIG_PACKAGE_amneziawg-tools=y" >> .config
