@@ -23,8 +23,8 @@ jobs:
 
       - name: Clone GL.iNet Build System
         run: |
-          git clone https://Ogorelkov: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@github.com/gl-inet/gl-infra-builder.git
-          cd gl-infra-builder
+          git clone https://github.com/gl-inet/imagebuilder.git
+          cd imagebuilder
           python3 setup.py -c profiles/glinet_mt6000
           make repo-update
 
