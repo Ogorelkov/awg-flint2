@@ -1,4 +1,4 @@
-name: Create Release on Tag
+name: Create Release for GL-MT6000
 
 on:
   workflow_dispatch:
@@ -44,27 +44,25 @@ jobs:
           echo "Setting up environment for ${{ matrix.build_env.pkgarch }}, target: ${{ matrix.build_env.target }}, subtarget: ${{ matrix.build_env.subtarget }}"
 
           # Setup feeds
-          wget https://downloads.openwrt.org/releases/${{ matrix.build_env.tag }}/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}/feeds.buildinfo -O feeds.conf
-          echo "src-git awgopenwrt https://github.com/yury-sannikov/awg-openwrt.git" >> feeds.conf
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-          # Setup config
-          wget https://downloads.openwrt.org/releases/${{ matrix.build_env.tag }}/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}/config.buildinfo -O .config
-          
-          # Add AmneziaWG packages
-          echo "CONFIG_PACKAGE_kmod-amneziawg=m" >> .config
-          echo "CONFIG_PACKAGE_amneziawg-tools=y" >> .config
-          echo "CONFIG_PACKAGE_luci-app-amneziawg=y" >> .config
-          echo "CONFIG_PACKAGE_kmod-crypto-lib-chacha20=m" >> .config
-          echo "CONFIG_PACKAGE_kmod-crypto-lib-chacha20poly1305=m" >> .config
-          echo "CONFIG_PACKAGE_kmod-crypto-chacha20poly1305=m" >> .config
-
-          # Optimize to build only kernel modules, not full images
-          sed -i 's/CONFIG_TARGET_IMAGES_PAD=y/# CONFIG_TARGET_IMAGES_PAD is not set/' .config || true
-          sed -i 's/CONFIG_TARGET_ROOTFS_INITRAMFS=y/# CONFIG_TARGET_ROOTFS_INITRAMFS is not set/' .config || true
-          sed -i 's/CONFIG_TARGET_ROOTFS_SQUASHFS=y/# CONFIG_TARGET_ROOTFS_SQUASHFS is not set/' .config || true
-          echo "# CONFIG_TARGET_BUILD_KERNEL is not set" >> .config
+          # Create minimal config
+          cat <<EOF > .config
+CONFIG_TARGET_mediatek=y
+CONFIG_TARGET_mediatek_filogic=y
+CONFIG_TARGET_mediatek_filogic_DEVICE_glinet_gl-mt6000=y
+CONFIG_PACKAGE_kmod-amneziawg=m
+CONFIG_PACKAGE_amneziawg-tools=y
+CONFIG_PACKAGE_luci-app-amneziawg=y
+CONFIG_PACKAGE_kmod-crypto-lib-chacha20=m
+CONFIG_PACKAGE_kmod-crypto-lib-chacha20poly1305=m
+CONFIG_PACKAGE_kmod-crypto-chacha20poly1305=m
+# CONFIG_TARGET_IMAGES_PAD is not set
+# CONFIG_TARGET_ROOTFS_INITRAMFS is not set
+# CONFIG_TARGET_ROOTFS_SQUASHFS is not set
+# CONFIG_TARGET_BUILD_KERNEL is not set
+EOF
 
           make defconfig
 
@@ -106,7 +104,13 @@ jobs:
           cp bin/packages/${{ matrix.build_env.pkgarch }}/awgopenwrt/luci-app-amneziawg_*.ipk awgrelease/luci-app-amneziawg_${postfix}.ipk
           cp bin/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}/packages/kmod-amneziawg_*.ipk awgrelease/kmod-amneziawg_${postfix}.ipk
 
+          # Create a zip for easier download
+          cd awgrelease
+          zip ../amneziawg_release_${postfix}.zip *
+
       - name: Release Artifacts
         uses: softprops/action-gh-release@v1
         with:
-          files: awgrelease/*.ipk
+          files: |
+            awgrelease/*.ipk
+            amneziawg_release_*.zip
