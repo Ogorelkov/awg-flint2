@@ -21,16 +21,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y python3 python3-pip wget unzip
 
-      - name: Clone GL.iNet Build System
+      - name: Clone GL.iNet Imagebuilder Repository
         run: |
           git clone https://github.com/gl-inet/imagebuilder.git
           cd imagebuilder
-          python3 setup.py -c profiles/glinet_mt6000
-          make repo-update
+          make GL-MT6000
 
       - name: Setup .config
         run: |
-          cd gl-infra-builder/openwrt
+          cd imagebuilder
           
           # Download standard config
           wget https://dl.gl-inet.com/firmware/mt6000/qsdk/24.10.0-rc5/config.buildinfo -O .config
@@ -50,10 +49,8 @@ jobs:
 
       - name: Build
         run: |
-          cd gl-infra-builder/openwrt
-          make tools/install -j$(nproc) || make tools/install -j1 V=s
-          make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
-          make target/linux/compile -j$(nproc) V=s
+          cd imagebuilder
+          make -j$(nproc) V=s
 
           # Проверяем vermagic
           VERMAGIC=$(cat ./build_dir/target-*/linux-*/linux-*/.vermagic)
@@ -71,7 +68,7 @@ jobs:
       - name: Collect Artifacts
         run: |
           mkdir -p awgrelease
-          find gl-infra-builder/openwrt/bin/packages/ -name "*amneziawg*.ipk" -exec cp {} awgrelease/ \;
+          find imagebuilder/bin/packages/ -name "*amneziawg*.ipk" -exec cp {} awgrelease/ \;
 
       - name: Release
         uses: softprops/action-gh-release@v1
