@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: openwrt/openwrt
-          ref: 6dacba30a7  # Конкретный коммит из вашей прошивки
+          ref: v24.10.0-rc5  # Используем тег вместо коммита
           fetch-depth: 0
 
       - name: Cache Tools and Kernel
