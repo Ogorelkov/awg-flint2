@@ -19,18 +19,20 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3 python3-pip wget unzip make gcc g++
+          sudo apt-get install -y python3 python3-pip wget unzip
 
-      - name: Clone GL.iNet Imagebuilder Repository
+      - name: Clone GL.iNet Build System
         run: |
-          git clone https://github.com/gl-inet/imagebuilder.git
-          cd imagebuilder
+          git clone https://github.com/gl-inet/gl-infra-builder.git
+          cd gl-infra-builder
+          python3 setup.py -c profiles/glinet_mt6000
+          make repo-update
 
-      - name: Setup .config for GL-MT6000
+      - name: Setup .config
         run: |
-          cd imagebuilder
-
-          # Скачиваем конфигурацию для GL-MT6000
+          cd gl-infra-builder/openwrt
+          
+          # Download standard config
           wget https://dl.gl-inet.com/firmware/mt6000/qsdk/24.10.0-rc5/config.buildinfo -O .config
 
           # Добавляем нужные пакеты
@@ -44,12 +46,14 @@ jobs:
           sed -i 's/CONFIG_TARGET_ROOTFS_SQUASHFS=y/# CONFIG_TARGET_ROOTFS_SQUASHFS is not set/' .config || true
           echo "# CONFIG_TARGET_BUILD_KERNEL is not set" >> .config
 
+          make defconfig
+
       - name: Build
         run: |
-          cd imagebuilder
-          
-          # Проверим доступные таргеты
-          make target/linux/{clean,prepare,compile} V=s
+          cd gl-infra-builder/openwrt
+          make tools/install -j$(nproc) || make tools/install -j1 V=s
+          make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
+          make target/linux/compile -j$(nproc) V=s
 
           # Проверяем vermagic
           VERMAGIC=$(cat ./build_dir/target-*/linux-*/linux-*/.vermagic)
@@ -67,7 +71,7 @@ jobs:
       - name: Collect Artifacts
         run: |
           mkdir -p awgrelease
-          find imagebuilder/bin/packages/ -name "*amneziawg*.ipk" -exec cp {} awgrelease/ \;
+          find gl-infra-builder/openwrt/bin/packages/ -name "*amneziawg*.ipk" -exec cp {} awgrelease/ \;
 
       - name: Release
         uses: softprops/action-gh-release@v1
