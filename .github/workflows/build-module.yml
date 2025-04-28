@@ -16,13 +16,13 @@ jobs:
             pkgarch: aarch64_cortex-a53
             target: mediatek
             subtarget: filogic
-            vermagic: "9469a6c8c449c47e503c05678ea1559d-r1"
+            vermagic: "9469a6c8c449c47e503c05678ea1559d-r1"  # Версия с роутера
 
     steps:
       - uses: actions/checkout@v4
         with:
           repository: openwrt/openwrt
-          ref: v24.10.0-rc5  # Используем тег вместо коммита
+          ref: 6dacba30a7  # Точный коммит из OPENWRT_VERSION
           fetch-depth: 0
 
       - name: Cache Tools and Kernel
@@ -40,7 +40,7 @@ jobs:
         run: |
           echo "pkgarch: ${{ matrix.build_env.pkgarch}}, target:${{ matrix.build_env.target}}, subtarget: ${{ matrix.build_env.subtarget}}"
           
-          # Очистка предыдущих сборок
+          # Очистка
           make clean
           make dirclean
 
@@ -49,7 +49,7 @@ jobs:
           echo "src-git awgopenwrt https://github.com/yury-sannikov/awg-openwrt.git" >> ./feeds.conf
           ./scripts/feeds update && ./scripts/feeds install -a
 
-          # Конфигурация
+          # Конфигурация (без интерактивного меню)
           wget https://downloads.openwrt.org/releases/${{ matrix.build_env.tag }}/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}/config.buildinfo -O .config
           echo "CONFIG_PACKAGE_kmod-amneziawg=m" >> .config
           echo "CONFIG_PACKAGE_amneziawg-tools=y" >> .config
@@ -57,7 +57,10 @@ jobs:
           echo "CONFIG_PACKAGE_kmod-crypto-lib-chacha20=m" >> .config
           echo "CONFIG_PACKAGE_kmod-crypto-lib-chacha20poly1305=m" >> .config
           echo "CONFIG_PACKAGE_kmod-crypto-chacha20poly1305=m" >> .config
-          make defconfig
+          
+          # Принудительное задание Vermagic
+          sed -i "s/CONFIG_VERSION_CODE=.*/CONFIG_VERSION_CODE=\"${{ matrix.build_env.vermagic }}\"/" .config
+          make defconfig NONINTERACTIVE=1
 
           # Сборка инструментов и ядра
           echo ">> Сборка tools и toolchain..."
@@ -65,6 +68,7 @@ jobs:
           make toolchain/install -j$(nproc)
 
           echo ">> Пересборка ядра..."
+          make target/linux/{clean,prepare} V=s
           make target/linux/compile -j$(nproc) V=s
 
           # Проверка Vermagic
