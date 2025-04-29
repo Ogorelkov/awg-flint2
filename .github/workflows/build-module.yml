@@ -79,4 +79,3 @@ jobs:
           path: |
             bin/packages/${{ matrix.build_env.pkgarch }}/awgopenwrt/*.ipk
             bin/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}/packages/kmod-amneziawg_*.ipk
-          retention-days: 5
