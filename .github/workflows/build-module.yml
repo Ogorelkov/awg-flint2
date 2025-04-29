@@ -32,7 +32,7 @@ jobs:
           sudo apt-get install -y \
             build-essential libncurses5-dev gawk git libssl-dev \
             gettext zlib1g-dev swig unzip time rsync python3 python3-setuptools \
-            binutils
+            binutils file
 
       - name: Setup feeds
         run: |
@@ -63,6 +63,7 @@ jobs:
 
       - name: Patch Vermagic in packages
         run: |
+          sudo apt-get install -y binutils file
           find bin/ -name "kmod-amneziawg*.ipk" | while read pkg; do
             echo "Processing package: $pkg"
             
@@ -70,11 +71,17 @@ jobs:
             cp "$pkg" "$TEMPDIR/original.ipk"
             
             # Extract IPK
-            (cd "$TEMPDIR" && ar x original.ipk)
+            (cd "$TEMPDIR" && ar x original.ipk) || {
+              echo "Failed to extract ar archive"
+              file "$TEMPDIR/original.ipk"
+              exit 1
+            }
             
-            # Extract and patch control
+            # Extract control
             mkdir "$TEMPDIR/control"
             tar -xzf "$TEMPDIR/control.tar.gz" -C "$TEMPDIR/control"
+            
+            # Patch control file
             sed -i 's/83c6d4e14f7353564d3cadaf38a15bef/9469a6c8c449c47e503c05678ea1559d-r1/g' "$TEMPDIR/control/control"
             
             # Repack control
@@ -83,13 +90,20 @@ jobs:
             # Create new IPK
             (cd "$TEMPDIR" && ar cr new.ipk debian-binary control.tar.gz data.tar.gz)
             
-            # Verify changes
-            echo "Verifying vermagic:"
-            ar p "$TEMPDIR/new.ipk" control.tar.gz | tar -xzO ./control | grep vermagic
+            # Verify new package
+            if ! ar t "$TEMPDIR/new.ipk" >/dev/null; then
+              echo "Invalid package after rebuild"
+              exit 1
+            fi
             
             # Replace original
             mv "$TEMPDIR/new.ipk" "$pkg"
+            
+            # Cleanup
             rm -rf "$TEMPDIR"
+            
+            echo "Verification:"
+            ar p "$pkg" control.tar.gz | tar -xzO ./control | grep vermagic
           done
 
       - name: Upload artifacts
@@ -99,3 +113,4 @@ jobs:
           path: |
             bin/packages/${{ matrix.build_env.pkgarch }}/awgopenwrt/*.ipk
             bin/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}/packages/kmod-amneziawg_*.ipk
+          retention-days: 5
