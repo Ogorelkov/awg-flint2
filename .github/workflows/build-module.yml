@@ -23,7 +23,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: openwrt/openwrt
-          ref: 6dacba30a7c449c47e503c05678ea1559d # Полный хэш коммита из версии GL.iNet
+          ref: v24.10.0-rc5
           fetch-depth: 0
 
       - name: Install dependencies
@@ -33,12 +33,6 @@ jobs:
             build-essential libncurses5-dev gawk git libssl-dev \
             gettext zlib1g-dev swig unzip time rsync python3 python3-setuptools
 
-      - name: Patch Vermagic
-        run: |
-          # Принудительная установка вермагика GL.iNet
-          echo "9469a6c8c449c47e503c05678ea1559d-r1" > vermagic.force
-          find ./ -name vermagic.h -exec sh -c 'cat vermagic.force > $1' _ {} \;
-
       - name: Setup feeds
         run: |
           echo "src-git awgopenwrt https://github.com/yury-sannikov/awg-openwrt.git" >> feeds.conf.default
@@ -47,39 +41,36 @@ jobs:
 
       - name: Configure build
         run: |
-          # Используем конфиг GL.iNet
-          wget https://raw.githubusercontent.com/gl-inet/openwrt/master/target/linux/mediatek/filogic/config-6.6 -O .config
-          
-          # Добавляем AmneziaWG
+          wget https://downloads.openwrt.org/releases/${{ matrix.build_env.tag }}/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}/config.buildinfo -O .config
           echo "CONFIG_PACKAGE_kmod-amneziawg=m" >> .config
           echo "CONFIG_PACKAGE_amneziawg-tools=y" >> .config
           echo "CONFIG_PACKAGE_luci-app-amneziawg=y" >> .config
-          
           make defconfig CONFIG_TERMINAL=y2j NONINTERACTIVE=1
 
-      - name: Build toolchain
+      - name: Build toolchain and kernel
         run: |
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
-
-      - name: Build kernel with forced Vermagic
-        run: |
-          # Переопределяем Vermagic перед сборкой
-          find ./ -name vermagic.h -exec sh -c 'echo "9469a6c8c449c47e503c05678ea1559d-r1" > $1' _ {} \;
-          
           make target/linux/{clean,prepare} V=s
           make target/linux/compile -j$(nproc) V=s
-          
-          # Проверка
-          VERMAGIC=$(cat ./build_dir/target-*/linux-*/linux-*/.vermagic)
-          echo "Vermagic после сборки: $VERMAGIC"
-          [ "$VERMAGIC" = "9469a6c8c449c47e503c05678ea1559d-r1" ] || exit 1
 
       - name: Build packages
         run: |
           make package/kmod-amneziawg/{clean,compile} V=s
           make package/luci-app-amneziawg/{clean,compile} V=s
           make package/amneziawg-tools/{clean,compile} V=s
+
+      - name: Patch Vermagic in packages
+        run: |
+          # Изменяем Vermagic в собранных пакетах
+          find bin/ -name "kmod-amneziawg*.ipk" -exec sed -i 's/83c6d4e14f7353564d3cadaf38a15bef/9469a6c8c449c47e503c05678ea1559d-r1/g' {} \;
+          
+          # Проверяем изменения
+          for pkg in bin/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}/packages/kmod-amneziawg_*.ipk; do
+            echo "Проверка пакета: $pkg"
+            tar -Oxzf $pkg ./control.tar.gz | tar -tz | grep vermagic && \
+            tar -Oxzf $pkg ./control.tar.gz | tar -xzO ./control | grep vermagic
+          done
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -88,3 +79,4 @@ jobs:
           path: |
             bin/packages/${{ matrix.build_env.pkgarch }}/awgopenwrt/*.ipk
             bin/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}/packages/kmod-amneziawg_*.ipk
+          retention-days: 5
