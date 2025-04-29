@@ -31,7 +31,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential libncurses5-dev gawk git libssl-dev \
-            gettext zlib1g-dev swig unzip time rsync python3 python3-setuptools
+            gettext zlib1g-dev swig unzip time rsync python3 python3-setuptools \
+            binutils
 
       - name: Setup feeds
         run: |
@@ -60,42 +61,43 @@ jobs:
           make package/luci-app-amneziawg/{clean,compile} V=s
           make package/amneziawg-tools/{clean,compile} V=s
 
-      - name: Patch Vermagic in packages
+      - name: Patch Vermagic in binary packages
         run: |
           find bin/ -name "kmod-amneziawg*.ipk" | while read pkg; do
-            echo "Processing package: $pkg"
+            echo "Patching package: $pkg"
             
             # Create temp dir
             TEMPDIR=$(mktemp -d)
-            cp "$pkg" "$TEMPDIR/original.ipk"
+            cp "$pkg" "$TEMPDIR/"
+            cd "$TEMPDIR"
             
-            # Extract using gunzip (since .ipk are actually gzipped tar files)
-            (cd "$TEMPDIR" && gunzip -c original.ipk > unpacked.tar)
-            
-            # Extract tar archive
-            (cd "$TEMPDIR" && tar -xf unpacked.tar)
+            # Extract package
+            mkdir data
+            tar -xzf "$(basename "$pkg")" -C data
             
             # Find and patch control file
-            CONTROL_FILE=$(find "$TEMPDIR" -name "control")
+            CONTROL_FILE=$(find data -name control)
             if [ -z "$CONTROL_FILE" ]; then
-              echo "Control file not found in package"
+              echo "Error: control file not found in package"
               exit 1
             fi
             
+            # Patch vermagic
             sed -i 's/83c6d4e14f7353564d3cadaf38a15bef/9469a6c8c449c47e503c05678ea1559d-r1/g' "$CONTROL_FILE"
             
-            # Repack
-            (cd "$TEMPDIR" && tar -cf repacked.tar $(ls | grep -v 'original.ipk' | grep -v 'unpacked.tar'))
-            (cd "$TEMPDIR" && gzip -c repacked.tar > patched.ipk)
+            # Repackage
+            tar -czf "$(basename "$pkg")" -C data .
+            
+            # Verify changes
+            echo "Verifying changes:"
+            tar -Ozxf "$(basename "$pkg")" | tar -Ox | grep -a "vermagic"
             
             # Replace original
-            mv "$TEMPDIR/patched.ipk" "$pkg"
+            cp "$(basename "$pkg")" "$pkg"
             
             # Cleanup
+            cd -
             rm -rf "$TEMPDIR"
-            
-            echo "Verification:"
-            tar -Ozxf "$pkg" | tar -Ox | grep -a "vermagic"
           done
 
       - name: Upload artifacts
@@ -105,3 +107,4 @@ jobs:
           path: |
             bin/packages/${{ matrix.build_env.pkgarch }}/awgopenwrt/*.ipk
             bin/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}/packages/kmod-amneziawg_*.ipk
+         
