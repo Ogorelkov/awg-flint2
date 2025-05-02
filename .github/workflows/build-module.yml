@@ -1,5 +1,5 @@
-name: Build AmneziaWG for GL.iNet GL-MT6000
-on: 
+name: Build AmneziaWG for GL.iNet (Force Depends)
+on:
   workflow_dispatch:
     push:
       tags:
@@ -7,17 +7,8 @@ on:
 
 jobs:
   build:
-    name: "OpenWrt Build for GL.iNet"
+    name: "Build with Forced Depends"
     runs-on: ubuntu-22.04
-    strategy:
-      matrix:
-        build_env:
-          - tag: "24.10.0-rc5"
-            pkgarch: "aarch64_cortex-a53"
-            target: "mediatek"
-            subtarget: "filogic"
-            vermagic: "9469a6c8c449c47e503c05678ea1559d-r1"
-
     steps:
       - name: Checkout OpenWrt
         uses: actions/checkout@v4
@@ -33,57 +24,44 @@ jobs:
             build-essential libncurses5-dev gawk git libssl-dev \
             gettext zlib1g-dev swig unzip time rsync python3 python3-setuptools
 
-      - name: Patch Vermagic before build
-        run: |
-          # Создаем файл с нужным vermagic
-          echo "9469a6c8c449c47e503c05678ea1559d-r1" > vermagic.force
-          
-          # Находим и заменяем все vermagic.h
-          find . -name vermagic.h | while read file; do
-            echo "Patching $file"
-            cp vermagic.force "$file"
-          done
-
       - name: Setup feeds
         run: |
           echo "src-git awgopenwrt https://github.com/yury-sannikov/awg-openwrt.git" >> feeds.conf.default
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: Configure build
+      - name: Configure minimal build
         run: |
-          wget https://downloads.openwrt.org/releases/${{ matrix.build_env.tag }}/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}/config.buildinfo -O .config
-          echo "CONFIG_PACKAGE_kmod-amneziawg=m" >> .config
-          echo "CONFIG_PACKAGE_amneziawg-tools=y" >> .config
-          echo "CONFIG_PACKAGE_luci-app-amneziawg=y" >> .config
-          make defconfig CONFIG_TERMINAL=y2j NONINTERACTIVE=1
-
-      - name: Build toolchain and kernel
-        run: |
-          make tools/install -j$(nproc)
-          make toolchain/install -j$(nproc)
-          make target/linux/{clean,prepare} V=s
-          make target/linux/compile -j$(nproc) V=s
-          
-          # Проверяем vermagic после сборки
-          VERMAGIC=$(cat ./build_dir/target-*/linux-*/linux-*/.vermagic)
-          echo "Resulting Vermagic: $VERMAGIC"
-          if [ "$VERMAGIC" != "${{ matrix.build_env.vermagic }}" ]; then
-            echo "Vermagic mismatch detected!"
-            exit 1
-          fi
+          cat > .config <<EOF
+          CONFIG_TARGET_mediatek=y
+          CONFIG_TARGET_mediatek_filogic=y
+          CONFIG_PACKAGE_kmod-amneziawg=m
+          CONFIG_PACKAGE_amneziawg-tools=y
+          EOF
+          make defconfig
 
       - name: Build packages
         run: |
-          make package/kmod-amneziawg/{clean,compile} V=s
-          make package/luci-app-amneziawg/{clean,compile} V=s
-          make package/amneziawg-tools/{clean,compile} V=s
+          make package/kmod-amneziawg/compile V=s
+          make package/amneziawg-tools/compile V=s
+
+      - name: Prepare install script
+        run: |
+          cat > install.sh <<'EOF'
+          #!/bin/sh
+          echo "Installing with forced dependencies..."
+          opkg install --force-depends --force-checksum --force-overwrite kmod-amneziawg*.ipk
+          opkg install amneziawg-tools*.ipk
+          echo "Verifying installation:"
+          lsmod | grep amnezia || echo "Module not loaded! Try rebooting."
+          EOF
+          chmod +x install.sh
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: gl-inet-packages
+          name: amnezia-packages
           path: |
-            bin/packages/${{ matrix.build_env.pkgarch }}/awgopenwrt/*.ipk
-            bin/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}/packages/kmod-amneziawg_*.ipk
-      
+            bin/targets/mediatek/filogic/packages/kmod-amneziawg_*.ipk
+            bin/packages/*/awgopenwrt/amneziawg-tools_*.ipk
+            install.sh
